@@ -2,6 +2,7 @@ import json
 import os
 import ipaddress
 import platform
+import shlex
 import subprocess
 import tkinter as tk
 from pathlib import Path
@@ -168,6 +169,20 @@ def discover_network_interfaces(system=None):
         error = completed.stderr.strip() or completed.stdout.strip()
         raise RuntimeError(error or "No network interfaces were found.")
     return interfaces
+
+
+def network_command_for_execution(command, system=None):
+    """Elevate only macOS network changes; keep the UI and config files user-owned."""
+    system = system or platform.system()
+    if (system == "Darwin" and command[:2] in (
+            ["networksetup", "-setmanual"], ["networksetup", "-setdhcp"])):
+        # Pass the shell command as an argument, never interpolate it into AppleScript.
+        shell_command = shlex.join(["/usr/sbin/networksetup", *command[1:]])
+        script = ("on run argv\n"
+                  "do shell script (item 1 of argv) with administrator privileges\n"
+                  "end run")
+        return ["/usr/bin/osascript", "-e", script, shell_command]
+    return command
 
 
 class DeleteProfileDialog(simpledialog.Dialog):
@@ -731,19 +746,13 @@ class IpPickaApp(tk.Tk):
             else:
                 command.append("none")
         elif system == "Darwin":
-            if not profile["gateway"]:
-                messagebox.showerror(
-                    APP_TITLE,
-                    "macOS networksetup requires a default gateway/router.",
-                )
-                return
             command = [
                 "networksetup",
                 "-setmanual",
                 profile["interface"],
                 profile["ipv4"],
                 profile["subnet_mask"],
-                profile["gateway"],
+                profile["gateway"] or "0.0.0.0",
             ]
         else:
             messagebox.showerror(APP_TITLE, f"Applying IP settings is not supported on {system}.")
@@ -796,7 +805,7 @@ class IpPickaApp(tk.Tk):
         self.write_output(f"$ {' '.join(command)}")
         try:
             completed = subprocess.run(
-                command,
+                network_command_for_execution(command),
                 capture_output=True,
                 text=True,
                 check=False,

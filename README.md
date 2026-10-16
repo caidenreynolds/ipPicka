@@ -71,12 +71,45 @@ profile values are rejected without replacing the currently loaded file.
 
 Network commands follow the host operating system: Windows 10/11 both use
 `netsh interface ipv4 set address`; macOS uses `networksetup -setmanual` and
-`networksetup -setdhcp`. macOS static profiles require a gateway. Changing settings
+`networksetup -setdhcp`. A blank gateway uses `0.0.0.0` when applying on macOS;
+Windows uses `none` to configure no gateway. The saved gateway stays blank. Changing settings
 requires sufficient administrator privileges. Command-dispatch tests mock
 execution and do not change network settings.
 
-## Validation and Windows build
+## Rebuilding the applications
 
-Run `python3 -m unittest -v`. To produce a Windows executable, run PyInstaller
-on Windows with `pyinstaller ipPicka.spec` (install PyInstaller first). Builds
-are platform-specific; a macOS build cannot produce a Windows executable.
+Install Python 3 with Tkinter on the computer doing the build. Each script
+creates/reuses `.venv-build`, installs PyInstaller, runs the tests, and rebuilds
+from the current source. Internet access is needed to install missing build
+dependencies. Close the previous app before rebuilding.
+
+On macOS, double-click `build_macos.command`, or run:
+
+```bash
+./build_macos.command
+```
+
+The result is `dist/ipPicka.app`. Open it in Finder or copy it into Applications.
+The app requests macOS administrator authorization when Set IP Address or
+Switch to DHCP is used. Viewing profiles and editing JSON need no elevation.
+Cancellation leaves the network command unexecuted. No password is stored by
+ipPicka. Builds use the current Mac's architecture. Distributing to other Macs
+may require Developer ID signing and notarization; these local scripts do not
+supply a signing identity or notarize the application.
+
+On Windows 10/11, double-click `build_windows.bat`, or run in Command Prompt:
+
+```bat
+build_windows.bat
+```
+
+The result is the standalone `dist\ipPicka.exe`. It includes a Windows manifest
+that requests administrator privileges when launched; users approve the UAC
+prompt before the app opens. The build script itself needs no administrator
+rights. Python is needed for building, but not for running the packaged app.
+
+Build each application on its target OS. Existing generated output is replaced
+on each build; JSON profiles outside `build` and `dist` are preserved.
+
+To run checks without building, use `python3 -m unittest -v` (or
+`py -3 -m unittest -v` on Windows).

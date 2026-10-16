@@ -2,8 +2,10 @@ import unittest
 from unittest.mock import Mock, patch
 from types import SimpleNamespace
 import subprocess
+import shlex
 
 from ip_picka import (
+    network_command_for_execution,
     IpPickaApp,
     IpOctetInput,
     normalize_config,
@@ -263,11 +265,13 @@ class NetworkCommandTests(unittest.TestCase):
 
     @patch("ip_picka.messagebox.showerror")
     @patch("ip_picka.platform.system", return_value="Darwin")
-    def test_macos_missing_gateway_is_reported(self, system, error):
+    def test_macos_blank_gateway_uses_zero_without_changing_profile(self, system, error):
         app = self.app(gateway="")
         IpPickaApp.apply_current_profile(app)
-        app.run_command.assert_not_called()
-        error.assert_called_once()
+        app.run_command.assert_called_once_with([
+            "networksetup", "-setmanual", "Ethernet 2", "10.0.0.2", "255.255.255.0", "0.0.0.0"])
+        self.assertEqual(app.validate_form_profile()["gateway"], "")
+        error.assert_not_called()
 
     @patch("ip_picka.messagebox.showerror")
     @patch("ip_picka.platform.system", return_value="Linux")
@@ -277,6 +281,26 @@ class NetworkCommandTests(unittest.TestCase):
         IpPickaApp.switch_to_dhcp(app)
         app.run_command.assert_not_called()
         self.assertEqual(error.call_count, 2)
+
+
+class AuthorizationTests(unittest.TestCase):
+    def test_macos_network_changes_prompt_with_safely_quoted_arguments(self):
+        interface = 'Ethernet "2"; $(touch /tmp/unwanted)'
+        for mode in ("-setmanual", "-setdhcp"):
+            command = ["networksetup", mode, interface]
+            wrapped = network_command_for_execution(command, "Darwin")
+            self.assertEqual(wrapped[:2], ["/usr/bin/osascript", "-e"])
+            self.assertIn("with administrator privileges", wrapped[2])
+            self.assertNotIn(interface, wrapped[2])
+            self.assertEqual(shlex.split(wrapped[3]), ["/usr/sbin/networksetup", mode, interface])
+
+    def test_macos_read_only_commands_do_not_prompt(self):
+        command = ["networksetup", "-getinfo", "Wi-Fi"]
+        self.assertEqual(network_command_for_execution(command, "Darwin"), command)
+
+    def test_windows_uses_executable_elevation_without_wrapping_commands(self):
+        command = ["netsh", "interface", "ipv4", "set", "address", "name=Ethernet", "dhcp"]
+        self.assertEqual(network_command_for_execution(command, "Windows"), command)
 
 
 if __name__ == "__main__":
