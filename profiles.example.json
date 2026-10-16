@@ -1,0 +1,72 @@
+{
+  "version": 2,
+  "clients": [
+    {
+      "name": "Example Client",
+      "sites": [
+        {
+          "name": "Main Site",
+          "profiles": [
+            {
+              "name": "192.168.1.244",
+              "interface": "Ethernet 4",
+              "ipv4": "192.168.1.244",
+              "subnet_mask": "255.255.255.0",
+              "gateway": ""
+            },
+            {
+              "name": "169.254.0.1",
+              "interface": "Ethernet 4",
+              "ipv4": "169.254.0.1",
+              "subnet_mask": "255.255.0.0",
+              "gateway": ""
+            }
+          ],
+          "subsites": [
+            {
+              "name": "Building A",
+              "profiles": [
+                {
+                  "name": "10.203.1.8",
+                  "interface": "Ethernet 4",
+                  "ipv4": "10.203.1.8",
+                  "subnet_mask": "255.255.255.0",
+                  "gateway": ""
+                },
+                {
+                  "name": "192.168.0.244",
+                  "interface": "Ethernet 4",
+                  "ipv4": "192.168.0.244",
+                  "subnet_mask": "255.255.255.0",
+                  "gateway": "192.168.0.201"
+                }
+              ],
+              "subsites": [
+                {
+                  "name": "Control Room",
+                  "profiles": [
+                    {
+                      "name": "192.168.2.244",
+                      "interface": "Ethernet 4",
+                      "ipv4": "192.168.2.244",
+                      "subnet_mask": "255.255.255.0",
+                      "gateway": ""
+                    },
+                    {
+                      "name": "192.168.158.244",
+                      "interface": "Ethernet 4",
+                      "ipv4": "192.168.158.244",
+                      "subnet_mask": "255.255.255.0",
+                      "gateway": ""
+                    }
+                  ],
+                  "subsites": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
