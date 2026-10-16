@@ -171,13 +171,17 @@ def discover_network_interfaces(system=None):
 
 
 class DeleteProfileDialog(simpledialog.Dialog):
-    def __init__(self, parent, name):
+    def __init__(self, parent, name, kind="profile"):
+        self.kind = kind
         self.profile_name = name
         self.result = False
-        super().__init__(parent, title="Delete Profile")
+        super().__init__(parent, title=f"Delete {kind.title()}")
 
     def body(self, master):
-        ttk.Label(master, text=f'Are you sure you want to delete "{self.profile_name}"?',
+        message = f'Are you sure you want to delete "{self.profile_name}"?'
+        if self.kind != "profile":
+            message += "\n\nAll sites, subsites, and profiles under this object will also be deleted."
+        ttk.Label(master, text=message,
                   wraplength=400).pack(padx=12, pady=12)
 
     def buttonbox(self):
@@ -304,11 +308,21 @@ class IpPickaApp(tk.Tk):
         self.tree.bind("<<TreeviewSelect>>", self.on_tree_selected)
         additions = ttk.Frame(self.sidebar)
         additions.pack(fill="x", pady=8)
-        for label, kind in (("+ Client", "client"), ("+ Site", "site"),
-                            ("+ Subsite", "subsite"), ("+ Profile", "profile")):
-            ttk.Button(additions, text=label, command=lambda k=kind: self.add_node(k)).pack(fill="x", pady=2)
-        self.delete_profile_button = ttk.Button(additions, text="- Profile", command=self.delete_profile)
-        self.delete_profile_button.pack(fill="x", pady=2)
+        self.add_buttons = {}
+        self.delete_buttons = {}
+        additions.columnconfigure((0, 1), weight=1)
+        for row, kind in enumerate(("client", "site", "subsite", "profile")):
+            add = ttk.Button(additions, text=f"+ {kind.title()}",
+                             command=lambda k=kind: self.add_node(k))
+            delete = ttk.Button(additions, text=f"- {kind.title()}",
+                                command=lambda k=kind: self.delete_node(k))
+            add.grid(row=row, column=0, sticky="ew", padx=(0, 3), pady=2)
+            delete.grid(row=row, column=1, sticky="ew", padx=(3, 0), pady=2)
+            self.add_buttons[kind] = add
+            self.delete_buttons[kind] = delete
+        ttk.Button(additions, text="Clear Selection", command=self.clear_selection).grid(
+            row=4, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        self.tree.bind("<Escape>", lambda _event: self.clear_selection())
         main = ttk.Frame(self.panes, padding=16)
         self.panes.add(main, weight=1)
         self.after_idle(lambda: self.panes.sashpos(0, 300))
@@ -451,11 +465,14 @@ class IpPickaApp(tk.Tk):
                 self.tree.see(item)
         for client in self.config_data["clients"]:
             insert("", "client", client)
+        self.update_menu_buttons()
 
     def on_tree_selected(self, _event=None):
         selection = self.tree.selection()
         if not selection:
+            self.update_menu_buttons()
             return
+        self.update_menu_buttons()
         kind, obj, owner = self.nodes[selection[0]]
         if kind == "profile" and obj is self.selected_profile:
             return
@@ -495,7 +512,38 @@ class IpPickaApp(tk.Tk):
         self.loading_form = False
         self.update_action_buttons()
 
+    def clear_selection(self):
+        if not self.confirm_discard():
+            return
+        self.tree.selection_remove(*self.tree.selection())
+        self.selected_profile = self.profile_parent = None
+        self.editing = self.new_profile_mode = False
+        self.set_form(None)
+
+    def can_add_node(self, kind):
+        if not self.config_path:
+            return False
+        selection = self.tree.selection()
+        selected = self.nodes.get(selection[0]) if selection else None
+        parent_kind = selected[0] if selected else None
+        return parent_kind in {
+            "client": (None,), "site": ("client",),
+            "subsite": ("site", "subsite"),
+            "profile": ("site", "subsite", "profile"),
+        }[kind]
+
+    def update_menu_buttons(self):
+        selection = self.tree.selection()
+        selected = self.nodes.get(selection[0]) if selection else None
+        for kind, button in self.add_buttons.items():
+            button.configure(state="normal" if self.can_add_node(kind) else "disabled")
+        for kind, button in self.delete_buttons.items():
+            enabled = bool(self.config_path and selected and selected[0] == kind and not self.new_profile_mode)
+            button.configure(state="normal" if enabled else "disabled")
+
     def add_node(self, kind):
+        if not self.can_add_node(kind):
+            return
         if not self.config_path:
             messagebox.showinfo(APP_TITLE, "Load or create a JSON file first.")
             return
@@ -539,14 +587,20 @@ class IpPickaApp(tk.Tk):
         self.refresh_tree(obj)
 
     def delete_profile(self):
+        self.delete_node("profile")
+
+    def delete_node(self, kind):
         selection = self.tree.selection()
         selected = self.nodes.get(selection[0]) if selection else None
-        if not selected or selected[0] != "profile" or self.new_profile_mode:
+        if not selected or selected[0] != kind or self.new_profile_mode:
             return
         _, profile, owner = selected
-        if not DeleteProfileDialog(self, profile["name"]).result:
+        if not DeleteProfileDialog(self, profile["name"], kind).result:
             return
-        siblings = owner["profiles"]
+        if kind == "client":
+            siblings = self.config_data["clients"]
+        else:
+            siblings = owner[{"site": "sites", "subsite": "subsites", "profile": "profiles"}[kind]]
         index = next(i for i, candidate in enumerate(siblings) if candidate is profile)
         siblings.pop(index)
         if not self.save_config():
@@ -557,7 +611,7 @@ class IpPickaApp(tk.Tk):
         self.editing = self.new_profile_mode = False
         self.set_form(None)
         self.refresh_tree(owner)
-        self.write_output(f"Deleted profile: {profile['name']}")
+        self.write_output(f"Deleted {kind}: {profile['name']}")
 
     def clear_output(self):
         self.output.configure(state="normal")
@@ -591,8 +645,7 @@ class IpPickaApp(tk.Tk):
         return self.selected_profile is not None and self.current_form_profile() != self.selected_profile
 
     def update_action_buttons(self):
-        self.delete_profile_button.configure(
-            state="normal" if self.selected_profile and not self.new_profile_mode else "disabled")
+        self.update_menu_buttons()
         state = "normal" if self.editing else "disabled"
         for widget in (self.name_entry, self.interface_combo, self.refresh_interfaces_button):
             widget.configure(state=state)

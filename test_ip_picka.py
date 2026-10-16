@@ -115,7 +115,7 @@ class ProfileInteractionTests(unittest.TestCase):
     def test_delete_cancel_preserves_profile(self, dialog):
         app, profile, owner = self.deletion_app()
         dialog.return_value.result = False
-        IpPickaApp.delete_profile(app)
+        IpPickaApp.delete_node(app, "profile")
         self.assertEqual(owner["profiles"], [profile])
         app.save_config.assert_not_called()
 
@@ -123,7 +123,7 @@ class ProfileInteractionTests(unittest.TestCase):
     def test_delete_persists_and_clears_selection(self, dialog):
         app, _, owner = self.deletion_app()
         dialog.return_value.result = True
-        IpPickaApp.delete_profile(app)
+        IpPickaApp.delete_node(app, "profile")
         self.assertEqual(owner["profiles"], [])
         self.assertIsNone(app.selected_profile)
         app.refresh_tree.assert_called_once_with(owner)
@@ -135,7 +135,7 @@ class ProfileInteractionTests(unittest.TestCase):
         owner["profiles"].append(other)
         app.save_config.return_value = False
         dialog.return_value.result = True
-        IpPickaApp.delete_profile(app)
+        IpPickaApp.delete_node(app, "profile")
         self.assertEqual(owner["profiles"], [profile, other])
         self.assertIs(app.selected_profile, profile)
         app.refresh_tree.assert_not_called()
@@ -166,6 +166,117 @@ class ProfileInteractionTests(unittest.TestCase):
         widget = SimpleNamespace(entries=[entry], _advance=Mock())
         self.assertEqual(IpOctetInput._on_period(widget, 0), "break")
         widget._advance.assert_called_once_with(0)
+
+
+class HierarchyActionTests(unittest.TestCase):
+    def test_add_selection_rules(self):
+        allowed = {None: {"client"}, "client": {"site"},
+                   "site": {"subsite", "profile"}, "subsite": {"subsite", "profile"},
+                   "profile": {"profile"}}
+        for selection, expected in allowed.items():
+            app = SimpleNamespace(config_path="config.json", tree=Mock(),
+                                  nodes={"x": (selection, {}, None)})
+            app.tree.selection.return_value = ("x",) if selection else ()
+            for kind in ("client", "site", "subsite", "profile"):
+                with self.subTest(selection=selection, kind=kind):
+                    self.assertEqual(IpPickaApp.can_add_node(app, kind), kind in expected)
+            app.config_path = None
+            self.assertFalse(IpPickaApp.can_add_node(app, "client"))
+
+    def test_delete_buttons_match_selection_type(self):
+        for kind in (None, "client", "site", "subsite", "profile"):
+            app = SimpleNamespace(config_path="config.json", tree=Mock(),
+                                  nodes={"x": (kind, {}, None)}, new_profile_mode=False,
+                                  add_buttons={}, delete_buttons={k: Mock() for k in
+                                      ("client", "site", "subsite", "profile")})
+            app.tree.selection.return_value = ("x",) if kind else ()
+            IpPickaApp.update_menu_buttons(app)
+            for button_kind, button in app.delete_buttons.items():
+                button.configure.assert_called_with(state="normal" if button_kind == kind else "disabled")
+            app.new_profile_mode = True
+            IpPickaApp.update_menu_buttons(app)
+            for button in app.delete_buttons.values():
+                button.configure.assert_called_with(state="disabled")
+
+    @patch("ip_picka.DeleteProfileDialog")
+    def test_delete_branches_cancel_success_and_save_failure(self, dialog):
+        for kind, key in (("client", "clients"), ("site", "sites"), ("subsite", "subsites")):
+            for confirm, saved in ((False, True), (True, False), (True, True)):
+                with self.subTest(kind=kind, confirm=confirm, saved=saved):
+                    obj = {"name": "Branch", "subsites": [{"name": "Nested", "profiles": [{"name": "PLC"}]}]}
+                    other = {"name": "Other"}
+                    owner = {key: [obj, other]}
+                    app = SimpleNamespace(tree=Mock(), nodes={"x": (kind, obj, owner)},
+                                          config_data=owner, new_profile_mode=False,
+                                          save_config=Mock(return_value=saved), set_form=Mock(),
+                                          refresh_tree=Mock(), write_output=Mock())
+                    app.tree.selection.return_value = ("x",)
+                    dialog.return_value.result = confirm
+                    IpPickaApp.delete_node(app, kind)
+                    self.assertEqual(owner[key], [other] if confirm and saved else [obj, other])
+                    dialog.assert_called_with(app, "Branch", kind)
+
+    @patch("ip_picka.DeleteProfileDialog")
+    def test_delete_wrong_kind_does_nothing(self, dialog):
+        app = SimpleNamespace(tree=Mock(), nodes={"x": ("site", {}, {})}, new_profile_mode=False)
+        app.tree.selection.return_value = ("x",)
+        IpPickaApp.delete_node(app, "client")
+        dialog.assert_not_called()
+
+
+class NetworkCommandTests(unittest.TestCase):
+    def app(self, gateway="10.0.0.1"):
+        profile = {"name": "PLC", "interface": "Ethernet 2", "ipv4": "10.0.0.2",
+                   "subnet_mask": "255.255.255.0", "gateway": gateway}
+        return SimpleNamespace(validate_form_profile=lambda: profile, run_command=Mock(),
+                               interface_var=SimpleNamespace(get=lambda: profile["interface"]))
+
+    @patch("ip_picka.platform.system", return_value="Windows")
+    def test_windows_10_and_11_use_netsh(self, system):
+        for release in ("10", "11"):
+            with self.subTest(release=release), patch("ip_picka.platform.release", return_value=release):
+                app = self.app()
+                IpPickaApp.apply_current_profile(app)
+                app.run_command.assert_called_once_with([
+                    "netsh", "interface", "ipv4", "set", "address", "name=Ethernet 2",
+                    "static", "10.0.0.2", "255.255.255.0", "10.0.0.1"])
+                app.run_command.reset_mock()
+                IpPickaApp.switch_to_dhcp(app)
+                app.run_command.assert_called_once_with([
+                    "netsh", "interface", "ipv4", "set", "address", "name=Ethernet 2", "dhcp"])
+
+    @patch("ip_picka.platform.system", return_value="Windows")
+    def test_windows_blank_gateway_removes_gateway(self, system):
+        app = self.app(gateway="")
+        IpPickaApp.apply_current_profile(app)
+        self.assertEqual(app.run_command.call_args.args[0][-1], "none")
+
+    @patch("ip_picka.platform.system", return_value="Darwin")
+    def test_macos_uses_networksetup(self, system):
+        app = self.app()
+        IpPickaApp.apply_current_profile(app)
+        app.run_command.assert_called_once_with([
+            "networksetup", "-setmanual", "Ethernet 2", "10.0.0.2", "255.255.255.0", "10.0.0.1"])
+        app.run_command.reset_mock()
+        IpPickaApp.switch_to_dhcp(app)
+        app.run_command.assert_called_once_with(["networksetup", "-setdhcp", "Ethernet 2"])
+
+    @patch("ip_picka.messagebox.showerror")
+    @patch("ip_picka.platform.system", return_value="Darwin")
+    def test_macos_missing_gateway_is_reported(self, system, error):
+        app = self.app(gateway="")
+        IpPickaApp.apply_current_profile(app)
+        app.run_command.assert_not_called()
+        error.assert_called_once()
+
+    @patch("ip_picka.messagebox.showerror")
+    @patch("ip_picka.platform.system", return_value="Linux")
+    def test_unsupported_system_does_not_run_commands(self, system, error):
+        app = self.app()
+        IpPickaApp.apply_current_profile(app)
+        IpPickaApp.switch_to_dhcp(app)
+        app.run_command.assert_not_called()
+        self.assertEqual(error.call_count, 2)
 
 
 if __name__ == "__main__":

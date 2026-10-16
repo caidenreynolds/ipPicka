@@ -9,6 +9,15 @@ Select a client to add a site, or a site/subsite to add a subsite or profile.
 Sites and subsites can contain both profiles and more subsites. Use the tree's
 expand controls to browse; select a profile to view its settings.
 
+Add and delete buttons appear in pairs. Delete is enabled only for the selected
+object type. Deleting a client, site, or subsite asks for confirmation and removes
+all of its descendant sites, subsites, and profiles from the JSON file. Cancel
+preserves the branch; a save failure restores the branch in memory.
+
+Use Clear Selection (or Escape in the tree) to enable + Client. Select a client
+for + Site, or a site/subsite for + Subsite. + Subsite is disabled on profiles.
++ Profile adds under the selected site/subsite, or beside a selected profile.
+
 Fields start disabled. Click Edit to enable them, then Load My Interfaces to
 retrieve local adapter names (including disconnected adapters on Windows).
 Typing in Interface filters the dropdown; manual names are also supported.
@@ -59,6 +68,12 @@ Interface names must match the local operating system's adapter names.
 Legacy version 1 flat files and profile arrays open under Imported profiles →
 Default site; the next save writes version 2. Unsupported versions and invalid
 profile values are rejected without replacing the currently loaded file.
+
+Network commands follow the host operating system: Windows 10/11 both use
+`netsh interface ipv4 set address`; macOS uses `networksetup -setmanual` and
+`networksetup -setdhcp`. macOS static profiles require a gateway. Changing settings
+requires sufficient administrator privileges. Command-dispatch tests mock
+execution and do not change network settings.
 
 ## Validation and Windows build
 
